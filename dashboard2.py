@@ -9,7 +9,6 @@ from matplotlib.path import Path
 import sys
 
 # ─── PREVENÇÃO DE ERRO DE RECURSIVIDADE DO FOLIUM/JINJA2 ──────────────────────
-# Isso é vital para mapas muito complexos não quebrarem o servidor Python
 sys.setrecursionlimit(10000)
 
 # ─── PAGE CONFIG ──────────────────────────────────────────────────────────────
@@ -19,8 +18,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ─── CSS UNIFICADO E BRUTALISTA PARA MOBILE TELA CHEIA ──────────────────────────
-# Este bloco mata todas as margens do Streamlit e força o layout perfeito
+# ─── CSS UNIFICADO E BRUTALISTA PARA MOBILE TELA CHEIA ────────────────────────
 st.markdown('''<style>
     /* 1. MATA O LAYOUT FLEXBOX PADRÃO DO STREAMLIT */
     html, body, [data-testid="stApp"], [data-testid="stMainWindow"], .main {
@@ -28,7 +26,7 @@ st.markdown('''<style>
         width: 100vw !important;
         margin: 0 !important;
         padding: 0 !important;
-        overflow: hidden !important; /* Trava o scroll da página, deixa só o mapa rolar */
+        overflow: hidden !important;
     }
 
     .block-container {
@@ -41,7 +39,7 @@ st.markdown('''<style>
         display: none !important;
     }
 
-    /* 2. SEU HEADER AZUL - CORREÇÃO DE TEXTO PARA MOBILE */
+    /* 2. SEU HEADER AZUL */
     .aaoria-header {
         background: linear-gradient(90deg, #0b1442 0%, #1a3a6e 100%);
         height: 44px; padding: 0 20px; display: flex; align-items: center; gap: 12px;
@@ -50,34 +48,32 @@ st.markdown('''<style>
     }
     .aaoria-header .htitle {
         color:#fff; font-size:15px; font-weight:600; font-family:sans-serif;
-        white-space: nowrap; /* Impede o texto de quebrar linha bagunçadamente */
-        overflow: hidden; /* Esconde o excesso se não couber */
-        text-overflow: ellipsis; /* Adiciona "..." se o texto for cortado */
-        flex: 1; /* Permite que este elemento cresça/encolha no container flex */
-        min-width: 0; /* Necessário para flex-shrink funcionar com ellipsis */
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex: 1;
+        min-width: 0;
     }
     .aaoria-header .hbadge {
         background:rgba(255,255,255,0.15); color:#a8d4ff;
         font-size:11px; padding:2px 9px; border-radius:10px; font-family:sans-serif;
-        flex-shrink: 0; /* Não deixa o badge encolher, prioriza seu texto */
+        flex-shrink: 0;
     }
 
     /* 3. A MÁGICA DO IFRAME PARA CELULAR TELA CHEIA */
-    /* Destrava a div invisível que o Streamlit coloca em volta do Markdown */
     div[data-testid="stMarkdownContainer"] {
         width: 100vw !important;
     }
 
-    /* Trava o iframe com class exatamente no limite da tela, abaixo do header */
     .map-responsive-iframe {
         position: fixed !important;
-        top: 44px !important; /* Exatamente a altura do seu header */
+        top: 44px !important;
         left: 0 !important;
         width: 100vw !important;
-        height: calc(100dvh - 44px) !important; /* Respeita a barra de navegação do mobile */
+        height: calc(100dvh - 44px) !important;
         border: none !important;
         z-index: 999;
-        -webkit-overflow-scrolling: touch !important; /* Vital para scroll fluído no iOS Safari */
+        -webkit-overflow-scrolling: touch !important;
     }
 </style>''', unsafe_allow_html=True)
 
@@ -112,20 +108,17 @@ BUOY_SVG = """<svg xmlns='http://www.w3.org/2000/svg' width='32' height='44' vie
 # ─── CARGA DE DADOS (cached) ──────────────────────────────────────────────────
 @st.cache_data(show_spinner="Carregando dados...")
 def load_data():
-    # ── Argo ──
     try:
         argo_df = pd.read_csv('dados_argo_brasil_2025_completo.csv')
     except FileNotFoundError:
         st.error("Arquivo 'dados_argo_brasil_2025_completo.csv' não encontrado.")
         st.stop()
 
-    # Última posição por boia
     argo_latest = (argo_df
                    .drop_duplicates(subset=['PLATFORM_NUMBER'], keep='last')
                    .dropna(subset=['LATITUDE', 'LONGITUDE'])
                    .copy())
 
-    # Trail: subsample para no máximo 3000 pontos totais (era tudo)
     argo_full = argo_df.dropna(subset=['LATITUDE', 'LONGITUDE']).copy()
     time_col = next((c for c in ['JULD','DATE','TIME','date','time','timestamp','TIMESTAMP']
                      if c in argo_full.columns), None)
@@ -134,7 +127,6 @@ def load_data():
     if len(argo_full) > 3000:
         argo_full = argo_full.iloc[::max(1, len(argo_full)//3000)].copy()
 
-    # ── ANP ──
     try:
         anp_df = pd.read_csv('gap_anp_offshore.csv').copy()
     except FileNotFoundError:
@@ -147,10 +139,8 @@ def load_data():
     anp_df['Name'] = anp_df['description'].apply(
         lambda d: 'ANP Platform' if pd.isna(d) else str(d).split('|')[0].strip()
     )
-    # Subsample ANP markers para max 300 (heatmap usa todos, markers são lentos)
     anp_markers = anp_df.sample(min(300, len(anp_df)), random_state=42) if len(anp_df) > 300 else anp_df
 
-    # ── SIMCosta ──
     try:
         sim_df = pd.read_csv('gap_simcosta_atualizado.csv').dropna(subset=['LATITUDE','LONGITUDE']).copy()
         if 'Name' not in sim_df.columns:
@@ -162,7 +152,6 @@ def load_data():
             'Name': [f'SIMCosta-{i+1:02d}' for i in range(10)],
         })
 
-    # ── Projeto Azul ──
     try:
         azul_df = pd.read_csv('gap_projeto_azul_area.csv').dropna(subset=['LATITUDE','LONGITUDE']).copy()
     except FileNotFoundError:
@@ -176,7 +165,7 @@ except Exception as e:
     st.error(f"Erro ao carregar dados: {e}")
     st.stop()
 
-# ─── PROJETO AZUL: nuvem (100 pts, era 300) ───────────────────────────────────
+# ─── PROJETO AZUL: nuvem ──────────────────────────────────────────────────────
 def make_azul_cloud(lat, lon, radius_km, seed=0):
     rng = np.random.default_rng(seed)
     k = 111.0
@@ -184,7 +173,7 @@ def make_azul_cloud(lat, lon, radius_km, seed=0):
     s_lon = (radius_km * 0.42) / (k * np.cos(np.radians(lat)))
     angle = rng.uniform(0, np.pi)
     stretch = rng.uniform(0.45, 0.75)
-    rl = rng.normal(0, s_lat, 100)   # reduzido de 300 → 100
+    rl = rng.normal(0, s_lat, 100)
     rn = rng.normal(0, s_lon * stretch, 100)
     fl = rl * np.cos(angle) - rn * np.sin(angle)
     fn = rl * np.sin(angle) + rn * np.cos(angle)
@@ -192,7 +181,6 @@ def make_azul_cloud(lat, lon, radius_km, seed=0):
     return [[lat + fl[i], lon + fn[i], float(w[i])] for i in range(100)]
 
 # ─── BUILD MAP (cached como HTML string) ──────────────────────────────────────
-# NOTA: Os prefixos '_' foram removidos para que o Streamlit valide o cache corretamente
 @st.cache_data(show_spinner="Construindo mapa...")
 def build_map_html(argo_latest_hash, argo_full_hash, anp_hash, sim_hash, azul_hash):
     m = folium.Map(
@@ -209,7 +197,7 @@ def build_map_html(argo_latest_hash, argo_full_hash, anp_hash, sim_hash, azul_ha
     fg_anp  = folium.FeatureGroup(name='ANP Offshores', show=False)
     fg_azul = folium.FeatureGroup(name='Projeto Azul', show=False)
 
-    # ── 1. ARGO ───────────────────────────────────────────────────────────────
+    # ── 1. ARGO ──
     raw = argo_latest[['LATITUDE','LONGITUDE','PLATFORM_NUMBER']].dropna().copy()
     if len(raw) > 0:
         raw['grid_lat'] = (raw['LATITUDE']  / 1.5).round(0)
@@ -233,15 +221,13 @@ def build_map_html(argo_latest_hash, argo_full_hash, anp_hash, sim_hash, azul_ha
                          f"<br>Data: Temperature, Salinity, Pressure</div>")
             ).add_to(fg_argo)
 
-    # Trail heatmap (forçado para float nativo para performance do Jinja2)
     trail_pts = argo_full[['LATITUDE','LONGITUDE']].dropna().astype(float).values.tolist()
     if trail_pts:
         HeatMap(trail_pts, min_opacity=0.4, radius=12, blur=10,
                 gradient={0.4:'#003366', 0.7:'#0077cc', 1.0:'#00ccff'}
                 ).add_to(fg_argo)
 
-    top20 = (argo_full.groupby('PLATFORM_NUMBER')
-             .size().nlargest(20).index.tolist())
+    top20 = (argo_full.groupby('PLATFORM_NUMBER').size().nlargest(20).index.tolist())
     for pid in top20:
         sub = argo_full[argo_full['PLATFORM_NUMBER'] == pid]
         if time_col:
@@ -263,7 +249,7 @@ def build_map_html(argo_latest_hash, argo_full_hash, anp_hash, sim_hash, azul_ha
 
     fg_argo.add_to(m)
 
-    # ── 2. SIMCOSTA ───────────────────────────────────────────────────────────
+    # ── 2. SIMCOSTA ──
     sim_pts = sim_df[['LATITUDE','LONGITUDE']].dropna().astype(float).values.tolist()
     if sim_pts:
         HeatMap(sim_pts, min_opacity=0.5, radius=18, blur=14,
@@ -294,7 +280,7 @@ def build_map_html(argo_latest_hash, argo_full_hash, anp_hash, sim_hash, azul_ha
 
     fg_sim.add_to(m)
 
-    # ── 3. ANP OFFSHORE ───────────────────────────────────────────────────────
+    # ── 3. ANP OFFSHORE ──
     pts_list = anp_df[['LATITUDE','LONGITUDE']].dropna().astype(float).values.tolist()
     if pts_list:
         HeatMap(pts_list, min_opacity=0.5, radius=16, blur=12,
@@ -312,7 +298,7 @@ def build_map_html(argo_latest_hash, argo_full_hash, anp_hash, sim_hash, azul_ha
 
     fg_anp.add_to(m)
 
-    # ── 4. PROJETO AZUL ───────────────────────────────────────────────────────
+    # ── 4. PROJETO AZUL ──
     if not azul_df.empty:
         cloud = []
         for idx, row in azul_df.iterrows():
@@ -330,7 +316,7 @@ def build_map_html(argo_latest_hash, argo_full_hash, anp_hash, sim_hash, azul_ha
                     ).add_to(fg_azul)
         fg_azul.add_to(m)
 
-    # ── Layer control ──────────────────────────────────────────────────────────
+    # ── Layer control ──
     GroupedLayerControl(
         groups={
             'ODIS Data': [fg_argo],
@@ -340,12 +326,39 @@ def build_map_html(argo_latest_hash, argo_full_hash, anp_hash, sim_hash, azul_ha
         exclusive_groups=False, collapsed=True, position='topleft'
     ).add_to(m)
 
-    # ── Legenda ───────────────────────────────────────────────────────────────
+    # ── LEGENDA RESPONSIVA (AGORA NO TOP-RIGHT) ───────────────────────────────
     legend_html = '''
-    <div style="position:fixed;bottom:30px;left:16px;
-        background:rgba(8,15,40,0.92);border:1px solid rgba(255,255,255,0.13);
-        border-radius:10px;padding:14px 16px;z-index:9999;min-width:195px;
-        font-family:sans-serif;color:#dce3f0;box-shadow:0 4px 20px rgba(0,0,0,.6);">
+    <style>
+        .map-legend {
+            /* Fixada no canto superior direito do Leaflet, longe da barra do navegador */
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(8,15,40,0.92);
+            border: 1px solid rgba(255,255,255,0.13);
+            border-radius: 10px;
+            padding: 12px 14px;
+            z-index: 9999; /* Super alto para sobrepor qualquer camada do Leaflet */
+            min-width: 170px;
+            font-family: sans-serif;
+            color: #dce3f0;
+            box-shadow: 0 4px 20px rgba(0,0,0,.6);
+            /* Evita que toques na legenda arrastem o mapa sem querer */
+            pointer-events: auto;
+        }
+
+        /* Em telas menores (celulares), reduz escala mas mantem ancorada no Top-Right */
+        @media (max-width: 600px) {
+            .map-legend {
+                top: 10px;
+                right: 10px;
+                transform: scale(0.85);
+                transform-origin: top right;
+            }
+        }
+    </style>
+
+    <div class="map-legend">
         <div style="font-size:10px;font-weight:700;letter-spacing:1px;color:#90b8d4;margin-bottom:7px;text-transform:uppercase;">Heatmap Intensity</div>
         <div style="height:11px;border-radius:3px;overflow:hidden;margin-bottom:3px;background:linear-gradient(to right,blue,cyan,yellow);"></div>
         <div style="display:flex;justify-content:space-between;font-size:9px;color:#7a90a4;margin-bottom:11px;">
@@ -362,7 +375,6 @@ def build_map_html(argo_latest_hash, argo_full_hash, anp_hash, sim_hash, azul_ha
     </div>'''
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    # NOTA: Retornamos o HTML bruto sem o iframe que o folium costuma injetar
     return m.get_root().render()
 
 # ─── HASHES para invalidar cache ──────────────────────────────────────────────
@@ -376,13 +388,6 @@ map_html = build_map_html(
     df_hash(anp_df), df_hash(sim_df), df_hash(azul_df)
 )
 
-# ─── RENDER NATIVO: Responsividade Absoluta no Mobile ───────────────────────
+# ─── RENDER NATIVO: Responsividade Absoluta no Mobile ─────────────────────────
 import streamlit.components.v1 as components
-import base64
-
-# O encode para base64 continua aqui, é vital para evitar round-trips Python↔JS
-b64 = base64.b64encode(map_html.encode("utf-8")).decode("utf-8")
-
-# Usamos components.html e aplicamos a class que definimos no CSS acima
-# O 'height=1000' é apenas um placeholder, o CSS no topo vai esmagá-lo
 components.html(map_html, height=1000, scrolling=False)
