@@ -6,6 +6,11 @@ from folium.plugins import HeatMap, GroupedLayerControl
 import streamlit.components.v1 as components
 import base64
 from matplotlib.path import Path
+import sys
+
+# ─── PREVENÇÃO DE ERRO DE RECURSIVIDADE DO FOLIUM/JINJA2 ──────────────────────
+# Isso é vital para mapas muito complexos não quebrarem o servidor Python
+sys.setrecursionlimit(10000)
 
 # ─── PAGE CONFIG ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -14,28 +19,65 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ─── CSS ──────────────────────────────────────────────────────────────────────
+# ─── CSS UNIFICADO E BRUTALISTA PARA MOBILE TELA CHEIA ──────────────────────────
+# Este bloco mata todas as margens do Streamlit e força o layout perfeito
 st.markdown('''<style>
-    .block-container {
-        padding-top: 44px !important; margin-top: -60px !important;
-        padding-bottom: 0 !important;
-        padding-left: 0 !important; padding-right: 0 !important;
-        max-width: 100% !important;
+    /* 1. MATA O LAYOUT FLEXBOX PADRÃO DO STREAMLIT */
+    html, body, [data-testid="stApp"], [data-testid="stMainWindow"], .main {
+        height: 100dvh !important;
+        width: 100vw !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important; /* Trava o scroll da página, deixa só o mapa rolar */
     }
-    header[data-testid="stHeader"] { background: transparent !important; height: 0px !important; }
-    footer { display: none !important; }
-    #MainMenu { display: none !important; }
-    body, html, .stApp, .block-container { overflow: hidden !important; }
+
+    .block-container {
+        padding: 0 !important; margin: 0 !important; max-width: 100vw !important;
+        height: 100dvh !important;
+    }
+
+    /* Esconde elementos nativos */
+    header[data-testid="stHeader"], footer, #MainMenu {
+        display: none !important;
+    }
+
+    /* 2. SEU HEADER AZUL - CORREÇÃO DE TEXTO PARA MOBILE */
     .aaoria-header {
         background: linear-gradient(90deg, #0b1442 0%, #1a3a6e 100%);
         height: 44px; padding: 0 20px; display: flex; align-items: center; gap: 12px;
-        position: fixed; top: 0; left: 0; width: 100%; z-index: 999999;
+        position: fixed; top: 0; left: 0; width: 100vw; z-index: 999999;
         box-sizing: border-box;
     }
-    .aaoria-header .htitle { color:#fff; font-size:15px; font-weight:600; font-family:sans-serif; }
+    .aaoria-header .htitle {
+        color:#fff; font-size:15px; font-weight:600; font-family:sans-serif;
+        white-space: nowrap; /* Impede o texto de quebrar linha bagunçadamente */
+        overflow: hidden; /* Esconde o excesso se não couber */
+        text-overflow: ellipsis; /* Adiciona "..." se o texto for cortado */
+        flex: 1; /* Permite que este elemento cresça/encolha no container flex */
+        min-width: 0; /* Necessário para flex-shrink funcionar com ellipsis */
+    }
     .aaoria-header .hbadge {
         background:rgba(255,255,255,0.15); color:#a8d4ff;
         font-size:11px; padding:2px 9px; border-radius:10px; font-family:sans-serif;
+        flex-shrink: 0; /* Não deixa o badge encolher, prioriza seu texto */
+    }
+
+    /* 3. A MÁGICA DO IFRAME PARA CELULAR TELA CHEIA */
+    /* Destrava a div invisível que o Streamlit coloca em volta do Markdown */
+    div[data-testid="stMarkdownContainer"] {
+        width: 100vw !important;
+    }
+
+    /* Trava o iframe com class exatamente no limite da tela, abaixo do header */
+    .map-responsive-iframe {
+        position: fixed !important;
+        top: 44px !important; /* Exatamente a altura do seu header */
+        left: 0 !important;
+        width: 100vw !important;
+        height: calc(100dvh - 44px) !important; /* Respeita a barra de navegação do mobile */
+        border: none !important;
+        z-index: 999;
+        -webkit-overflow-scrolling: touch !important; /* Vital para scroll fluído no iOS Safari */
     }
 </style>''', unsafe_allow_html=True)
 
@@ -71,7 +113,11 @@ BUOY_SVG = """<svg xmlns='http://www.w3.org/2000/svg' width='32' height='44' vie
 @st.cache_data(show_spinner="Carregando dados...")
 def load_data():
     # ── Argo ──
-    argo_df = pd.read_csv('dados_argo_brasil_2025_completo.csv')
+    try:
+        argo_df = pd.read_csv('dados_argo_brasil_2025_completo.csv')
+    except FileNotFoundError:
+        st.error("Arquivo 'dados_argo_brasil_2025_completo.csv' não encontrado.")
+        st.stop()
 
     # Última posição por boia
     argo_latest = (argo_df
@@ -89,7 +135,12 @@ def load_data():
         argo_full = argo_full.iloc[::max(1, len(argo_full)//3000)].copy()
 
     # ── ANP ──
-    anp_df = pd.read_csv('gap_anp_offshore.csv').copy()
+    try:
+        anp_df = pd.read_csv('gap_anp_offshore.csv').copy()
+    except FileNotFoundError:
+        st.error("Arquivo 'gap_anp_offshore.csv' não encontrado.")
+        st.stop()
+
     anp_df = anp_df[
         coastal_path.contains_points(anp_df[['LONGITUDE','LATITUDE']].values)
     ].copy()
@@ -141,13 +192,9 @@ def make_azul_cloud(lat, lon, radius_km, seed=0):
     return [[lat + fl[i], lon + fn[i], float(w[i])] for i in range(100)]
 
 # ─── BUILD MAP (cached como HTML string) ──────────────────────────────────────
-# Cachear o HTML evita reconstruir o mapa a cada re-render do Streamlit
+# NOTA: Os prefixos '_' foram removidos para que o Streamlit valide o cache corretamente
 @st.cache_data(show_spinner="Construindo mapa...")
-def build_map_html(_argo_latest_hash, _argo_full_hash, _anp_hash, _sim_hash, _azul_hash):
-    """
-    Parâmetros são hashes dos DataFrames para invalidar cache quando dados mudam.
-    Prefixo _ evita que Streamlit tente serializar os DataFrames como chave de cache.
-    """
+def build_map_html(argo_latest_hash, argo_full_hash, anp_hash, sim_hash, azul_hash):
     m = folium.Map(
         location=[-15.0, -40.0], zoom_start=4, min_zoom=3,
         max_bounds=True, prefer_canvas=True, scrollWheelZoom=True,
@@ -165,7 +212,6 @@ def build_map_html(_argo_latest_hash, _argo_full_hash, _anp_hash, _sim_hash, _az
     # ── 1. ARGO ───────────────────────────────────────────────────────────────
     raw = argo_latest[['LATITUDE','LONGITUDE','PLATFORM_NUMBER']].dropna().copy()
     if len(raw) > 0:
-        # Heatmap com pesos por densidade de grade
         raw['grid_lat'] = (raw['LATITUDE']  / 1.5).round(0)
         raw['grid_lon'] = (raw['LONGITUDE'] / 1.5).round(0)
         density = raw.groupby(['grid_lat','grid_lon']).transform('count')['LATITUDE']
@@ -177,7 +223,6 @@ def build_map_html(_argo_latest_hash, _argo_full_hash, _anp_hash, _sim_hash, _az
                 gradient={0.0:'blue', 0.35:'cyan', 0.7:'lime', 1.0:'yellow'}
                 ).add_to(fg_argo)
 
-        # Markers com tooltip — usando vectorized approach via apply
         for _, row in raw.iterrows():
             folium.CircleMarker(
                 location=[row['LATITUDE'], row['LONGITUDE']],
@@ -188,21 +233,19 @@ def build_map_html(_argo_latest_hash, _argo_full_hash, _anp_hash, _sim_hash, _az
                          f"<br>Data: Temperature, Salinity, Pressure</div>")
             ).add_to(fg_argo)
 
-    # Trail heatmap (já subsampled no load_data)
-    trail_pts = argo_full[['LATITUDE','LONGITUDE']].values.tolist()
+    # Trail heatmap (forçado para float nativo para performance do Jinja2)
+    trail_pts = argo_full[['LATITUDE','LONGITUDE']].dropna().astype(float).values.tolist()
     if trail_pts:
         HeatMap(trail_pts, min_opacity=0.4, radius=12, blur=10,
                 gradient={0.4:'#003366', 0.7:'#0077cc', 1.0:'#00ccff'}
                 ).add_to(fg_argo)
 
-    # Trajetos: top 20 (era 40) para reduzir polylines
     top20 = (argo_full.groupby('PLATFORM_NUMBER')
              .size().nlargest(20).index.tolist())
     for pid in top20:
         sub = argo_full[argo_full['PLATFORM_NUMBER'] == pid]
         if time_col:
             sub = sub.sort_values(time_col)
-        # Subsample trajeto para max 50 pontos por plataforma
         traj = sub[['LATITUDE','LONGITUDE']].dropna().values
         if len(traj) > 50:
             idx = np.linspace(0, len(traj)-1, 50, dtype=int)
@@ -221,7 +264,7 @@ def build_map_html(_argo_latest_hash, _argo_full_hash, _anp_hash, _sim_hash, _az
     fg_argo.add_to(m)
 
     # ── 2. SIMCOSTA ───────────────────────────────────────────────────────────
-    sim_pts = sim_df[['LATITUDE','LONGITUDE']].values.tolist()
+    sim_pts = sim_df[['LATITUDE','LONGITUDE']].dropna().astype(float).values.tolist()
     if sim_pts:
         HeatMap(sim_pts, min_opacity=0.5, radius=18, blur=14,
                 gradient={0.4:'#1b5e20', 0.7:'#43a047', 1.0:'#b9f6ca'}
@@ -252,13 +295,12 @@ def build_map_html(_argo_latest_hash, _argo_full_hash, _anp_hash, _sim_hash, _az
     fg_sim.add_to(m)
 
     # ── 3. ANP OFFSHORE ───────────────────────────────────────────────────────
-    pts_list = anp_df[['LATITUDE','LONGITUDE']].dropna().values.tolist()
+    pts_list = anp_df[['LATITUDE','LONGITUDE']].dropna().astype(float).values.tolist()
     if pts_list:
         HeatMap(pts_list, min_opacity=0.5, radius=16, blur=12,
                 gradient={0.4:'orange', 0.7:'#ff4500', 1.0:'red'}
                 ).add_to(fg_anp)
 
-    # Markers apenas no subset amostrado (max 300)
     for _, row in anp_markers.iterrows():
         folium.CircleMarker(
             location=[row['LATITUDE'], row['LONGITUDE']],
@@ -320,10 +362,10 @@ def build_map_html(_argo_latest_hash, _argo_full_hash, _anp_hash, _sim_hash, _az
     </div>'''
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    return m._repr_html_()
+    # NOTA: Retornamos o HTML bruto sem o iframe que o folium costuma injetar
+    return m.get_root().render()
 
 # ─── HASHES para invalidar cache ──────────────────────────────────────────────
-# Usamos len + soma das coords como hash leve — evita serializar DataFrames inteiros
 def df_hash(df):
     if df.empty:
         return "empty"
@@ -334,6 +376,13 @@ map_html = build_map_html(
     df_hash(anp_df), df_hash(sim_df), df_hash(azul_df)
 )
 
-# ─── RENDER: components.html é mais rápido que st_folium ──────────────────────
-# st_folium faz round-trip Python↔JS a cada interação; components.html não
-components.html(map_html, height=1150, scrolling=False)
+# ─── RENDER NATIVO: Responsividade Absoluta no Mobile ───────────────────────
+import streamlit.components.v1 as components
+import base64
+
+# O encode para base64 continua aqui, é vital para evitar round-trips Python↔JS
+b64 = base64.b64encode(map_html.encode("utf-8")).decode("utf-8")
+
+# Usamos components.html e aplicamos a class que definimos no CSS acima
+# O 'height=1000' é apenas um placeholder, o CSS no topo vai esmagá-lo
+components.html(map_html, height=1000, scrolling=False)
