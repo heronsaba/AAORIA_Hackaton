@@ -1,0 +1,11 @@
+PLATFORM_NUMBER,LONGITUDE,LATITUDE,description,source,in_odis
+Boia RS-1 (Rio Grande),-52.01,-32.16,Boia | Status: ATIVA (Transmitindo),SiMCosta_BR,False
+Boia SC-1 (Florianópolis),-48.33,-27.3,Boia | Status: ATIVA (Transmitindo),SiMCosta_BR,False
+Boia PR-1 (Paranaguá),-48.2,-25.75,Boia | Status: ATIVA (Transmitindo),SiMCosta_BR,False
+Boia SP-1 (Santos),-46.22,-24.16,Boia | Status: ATIVA (Transmitindo),SiMCosta_BR,False
+Boia RJ-3 (Guanabara),-43.14,-22.92,Boia | Status: ATIVA (Transmitindo),SiMCosta_BR,False
+Boia RJ-4 (Búzios),-41.88,-22.75,Boia | Status: INATIVA/MANUTENÇÃO,SiMCosta_BR,False
+Boia BA-1 (Porto Seguro),-38.98,-16.42,Boia | Status: INATIVA/MANUTENÇÃO,SiMCosta_BR,False
+Marégrafo Imbituba-SC,-48.65,-28.23,Marégrafo | Status: ATIVA (Transmitindo),SiMCosta_BR,False
+Marégrafo Tramandaí-RS,-50.12,-29.98,Marégrafo | Status: ATIVA (Transmitindo),SiMCosta_BR,False
+Marégrafo Suape-PE,-34.96,-8.39,Marégrafo | Status: ATIVA (Transmitindo),SiMCosta_BR,False

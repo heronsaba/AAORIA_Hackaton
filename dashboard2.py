@@ -1,0 +1,487 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import folium
+from folium.plugins import HeatMap, GroupedLayerControl
+from streamlit_folium import st_folium
+import base64
+from matplotlib.path import Path
+
+# ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+def get_base64_of_bin_file(bin_file):
+    try:
+        with open(bin_file, 'rb') as f:
+            data = f.read()
+        return base64.b64encode(data).decode()
+    except FileNotFoundError:
+        return ""
+
+# ─── PAGE CONFIG ──────────────────────────────────────────────────────────────
+
+st.set_page_config(
+    page_title="AAORIA Hackathon – Digital Landscape",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+img_base64 = get_base64_of_bin_file('/home/heron/aaoria_Ws/background.png')
+if img_base64:
+    st.markdown(f'''<style>
+        .stApp {{
+            background-image: url("data:image/png;base64,{img_base64}");
+            background-size: cover; background-attachment: fixed;
+        }}
+    </style>''', unsafe_allow_html=True)
+
+# ─── CSS ──────────────────────────────────────────────────────────────────────
+
+st.markdown('''<style>
+    .block-container {
+        padding-top: 44px !important; margin-top: -60px !important;
+        padding-bottom: 0 !important;
+        padding-left: 0 !important;  padding-right: 0 !important;
+        max-width: 100% !important;
+    }
+    header[data-testid="stHeader"] { background: transparent !important; height: 0px !important; min-height: 0px !important; }
+    footer  { display: none !important; }
+    #MainMenu { display: none !important; }
+    iframe  { border: none !important; height: calc(100vh - 44px) !important; }
+
+    body, html, .stApp, .block-container {
+        overflow: hidden !important;
+    }
+
+    .aaoria-header {
+        background: linear-gradient(90deg, #0b1442 0%, #1a3a6e 100%);
+        height: 44px; padding: 0 20px; display: flex; align-items: center; gap: 12px;
+        position: fixed; top: 0; left: 0; width: 100%; z-index: 999999;
+        box-sizing: border-box;
+    }
+    .aaoria-header .htitle {
+        color:#fff; font-size:15px; font-weight:600; font-family:sans-serif;
+    }
+    .aaoria-header .hbadge {
+        background:rgba(255,255,255,0.15); color:#a8d4ff;
+        font-size:11px; padding:2px 9px; border-radius:10px; font-family:sans-serif;
+    }
+
+    /* Sidebar */
+    [data-testid="stSidebar"] { background-color: rgba(8,15,50,0.97) !important; }
+    [data-testid="stSidebar"] * { color: #dce3f0 !important; }
+    [data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.1) !important; }
+
+    /* Grupo — linha colorida à esquerda */
+    .grp-block {
+        border-left: 3px solid;
+        padding-left: 10px;
+        margin: 10px 0 4px 0;
+    }
+    .grp-odis    { border-color: #4fc3f7; }
+    .grp-warn    { border-color: #ffb74d; }
+    .grp-dark    { border-color: #ef9a9a; }
+
+    .grp-label {
+        font-size: 10px; font-weight: 700; letter-spacing: 1.2px;
+        text-transform: uppercase; font-family: sans-serif;
+    }
+    .lbl-odis { color: #4fc3f7 !important; }
+    .lbl-warn { color: #ffb74d !important; }
+    .lbl-dark { color: #ef9a9a !important; }
+
+    .grp-desc {
+        font-size: 10px; font-family: sans-serif;
+        color: #7a8aaa !important; margin-top: 1px;
+    }
+
+    /* Sub-checkbox indent */
+    div[data-testid="stCheckbox"] { margin-left: 0px; }
+    .sub-wrap { padding-left: 16px; }
+</style>''', unsafe_allow_html=True)
+
+st.markdown('''
+    <div class="aaoria-header">
+        <span class="htitle">AAORIA Hackathon – Challenge 3: Atlantic Digital Landscape Mapping</span>
+        <span class="hbadge">Brazil Focus · 2026</span>
+    </div>
+''', unsafe_allow_html=True)
+
+# ─── POLÍGONO — idêntico ao V6, sem alterações ────────────────────────────────
+
+brazil_coastal_poly = [
+    # --- Limites do Oceano Atlântico ---
+    (-51.8,   7.0),  # Noroeste (Oceano acima do Amapá)
+    ( 20.0,   7.0),  # Nordeste (Oeste da África / Atlântico)
+    ( 20.0, -35.0),  # Sudeste (Atlântico Sul)
+    (-53.8, -35.0),  # Sudoeste (Oceano abaixo do Rio Grande do Sul)
+
+    # --- Contorno da Costa (De Sul a Norte, levemente adentro da terra) ---
+    (-53.8, -34.0),  # RS (Extremo Sul / Chuí)
+    (-51.0, -30.0),  # RS (Litoral gaúcho)
+    (-49.0, -27.5),  # SC (Litoral catarinense)
+    (-48.0, -25.0),  # PR/SP (Divisa Paraná e São Paulo)
+    (-47.0, -24.0),  # SP (Litoral paulista)
+    (-44.0, -23.0),  # RJ (Litoral fluminense)
+    (-41.0, -20.0),  # ES (Litoral capixaba)
+    (-39.5, -16.0),  # BA (Sul da Bahia)
+    (-39.0, -13.0),  # BA (Salvador e Recôncavo)
+    (-36.0,  -9.0),  # AL/PE (Litoral nordestino)
+    (-35.5,  -6.0),  # PB/RN (Ponta do Seixas / Esquina do continente)
+    (-39.5,  -3.5),  # CE (Litoral cearense)
+    (-44.5,  -2.0),  # MA (Litoral maranhense)
+    (-48.5,  -0.5),  # PA (Foz do Amazonas)
+    (-51.8,   4.5),  # AP (Extremo Norte / Oiapoque)
+
+    # Fecha o polígono no mesmo ponto inicial
+    (-51.8,   7.0)
+]
+coastal_path = Path(brazil_coastal_poly)
+
+# ─── CARGA DE DADOS ───────────────────────────────────────────────────────────
+
+@st.cache_data(show_spinner="Carregando e filtrando dados...")
+def load_and_filter_data():
+    argo_df = pd.read_csv('dados_argo_brasil_2025_completo.csv')
+
+    # Última posição por boia
+    argo_latest = argo_df.drop_duplicates(subset=['PLATFORM_NUMBER'], keep='last').copy()
+    argo_latest = argo_latest.dropna(subset=['LATITUDE', 'LONGITUDE']).copy()
+    argo_latest['Group'] = 'Argo Float'
+    argo_latest['Name']  = 'Platform ' + argo_latest['PLATFORM_NUMBER'].astype(str)
+
+    # Todos os registros para trail
+    argo_full = argo_df.dropna(subset=['LATITUDE','LONGITUDE']).copy()
+    time_col = next((c for c in ['JULD','DATE','TIME','date','time','timestamp','TIMESTAMP']
+                     if c in argo_full.columns), None)
+    if time_col:
+        argo_full = argo_full.sort_values(time_col)
+
+    # ANP
+    anp_df = pd.read_csv('gap_anp_offshore.csv').copy()
+    anp_df = anp_df[
+        coastal_path.contains_points(anp_df[['LONGITUDE','LATITUDE']].values)
+    ].copy()
+    anp_df['Group'] = 'ANP Offshore'
+    anp_df['Name']  = anp_df['description'].apply(
+        lambda d: 'ANP Platform' if pd.isna(d) else str(d).split('|')[0].strip()
+    )
+
+    # SIMCosta
+    try:
+        sim_df = pd.read_csv('gap_simcosta_atualizado.csv').copy()
+        sim_df = sim_df.dropna(subset=['LATITUDE','LONGITUDE'])
+        if 'Name' not in sim_df.columns:
+            sim_df['Name'] = [f'SIMCosta-{i+1:02d}' for i in range(len(sim_df))]
+    except FileNotFoundError:
+        sim_df = pd.DataFrame({
+            'LATITUDE':  [-23.5,-13.0,-3.7,-8.1,-20.3,-29.5,-1.4,-5.8,-15.9,-25.2],
+            'LONGITUDE': [-43.2,-38.5,-38.5,-34.9,-40.1,-48.7,-48.5,-35.2,-39.0,-44.5],
+            'Name': [f'SIMCosta-{i+1:02d}' for i in range(10)],
+        })
+
+    # Projeto Azul
+    try:
+        azul_df = pd.read_csv('gap_projeto_azul_area.csv').copy()
+        azul_df = azul_df.dropna(subset=['LATITUDE','LONGITUDE'])
+    except FileNotFoundError:
+        azul_df = pd.DataFrame()
+
+    return argo_latest, argo_full, anp_df, sim_df, azul_df
+
+try:
+    argo_latest, argo_full, anp_df, sim_df, azul_df = load_and_filter_data()
+except Exception as e:
+    st.error(f"Erro ao carregar dados: {e}")
+    st.stop()
+
+# ─── SIDEBAR: ÁRVORE DE GRUPOS ────────────────────────────────────────────────
+# Estrutura:
+#   ODIS Data               → checkbox-pai → Argo Floats / Argo Trails & Routes
+#   ODIS Data Needs Attn    → checkbox-pai → SIMCosta
+
+BUOY_SVG = """
+<svg xmlns='http://www.w3.org/2000/svg' width='32' height='44' viewBox='0 0 32 44'>
+  <!-- Antena -->
+  <line x1='16' y1='0' x2='16' y2='10' stroke='#c8e6c9' stroke-width='1.8'
+        stroke-linecap='round'/>
+  <!-- Luz de sinalização no topo da antena -->
+  <circle cx='16' cy='2' r='2.5' fill='#ffeb3b' stroke='#f9a825' stroke-width='1'/>
+  <!-- Corpo principal da boia (cilindro arredondado) -->
+  <rect x='7' y='10' width='18' height='20' rx='5' ry='5'
+        fill='#2e7d32' stroke='#c8e6c9' stroke-width='1.5'/>
+  <!-- Faixa central (cor de identificação) -->
+  <rect x='7' y='17' width='18' height='6' rx='0'
+        fill='#1b5e20' stroke='none'/>
+  <!-- Flutuador inferior (anel) -->
+  <ellipse cx='16' cy='30' rx='10' ry='4'
+           fill='#388e3c' stroke='#c8e6c9' stroke-width='1.2'/>
+  <!-- Base pontuda submersa -->
+  <path d='M11 30 Q16 44 21 30 Z'
+        fill='#1b5e20' stroke='#c8e6c9' stroke-width='1'/>
+  <!-- Símbolo de onda (dados oceânicos) -->
+  <path d='M10 21 Q12 19 14 21 Q16 23 18 21 Q20 19 22 21'
+        fill='none' stroke='#a5d6a7' stroke-width='1.2' stroke-linecap='round'/>
+</svg>
+"""
+
+# ─── PROJETO AZUL: nuvem densa irregular ──────────────────────────────────────
+
+def make_azul_cloud(lat, lon, radius_km, seed=0):
+    """300 pontos por área, elipse assimétrica rotacionada — não parece círculo."""
+    rng   = np.random.default_rng(seed)
+    k     = 111.0
+    s_lat = (radius_km * 0.42) / k
+    s_lon = (radius_km * 0.42) / (k * np.cos(np.radians(lat)))
+    angle   = rng.uniform(0, np.pi)
+    stretch = rng.uniform(0.45, 0.75)
+    rl = rng.normal(0, s_lat, 300)
+    rn = rng.normal(0, s_lon * stretch, 300)
+    fl = rl * np.cos(angle) - rn * np.sin(angle)
+    fn = rl * np.sin(angle) + rn * np.cos(angle)
+    w  = np.clip(np.exp(-(fl**2 / s_lat**2 + fn**2 / (s_lon*stretch)**2) * 1.2), 0.08, 1.0)
+    return [[lat + fl[i], lon + fn[i], float(w[i])] for i in range(300)]
+
+# ─── BUILD MAP ────────────────────────────────────────────────────────────────
+# Parâmetros de heatmap baseados no estilo original (app_otimizado):
+#   radius=14-18, blur=12-15, poucos stops de cor → efeito sólido sem glow difuso
+
+def build_map():
+
+    m = folium.Map(
+        location=[-15.0, -40.0], zoom_start=4, min_zoom=3,
+        max_bounds=True, prefer_canvas=True, scrollWheelZoom=True,
+    )
+    folium.TileLayer(
+        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attr='Esri', name='Esri Satellite', overlay=False, control=False,
+    ).add_to(m)
+
+    # Criando os FeatureGroups paras os menus do LayerControl
+    fg_argo = folium.FeatureGroup(name='Argo Floats, Trails & Routes', show=False)
+    fg_sim = folium.FeatureGroup(name='SIMCosta Coverage & Stations', show=False)
+    fg_anp = folium.FeatureGroup(name='ANP Offshores', show=False)
+    fg_azul = folium.FeatureGroup(name='Projeto Azul', show=False)
+
+    # ── 1. ARGO FLOATS + TRAILS ───────────────────────────────────────────────
+    raw = argo_latest[['LATITUDE','LONGITUDE', 'PLATFORM_NUMBER']].dropna().copy()
+    if len(raw) > 0:
+        raw['grid_lat'] = (raw['LATITUDE']  / 1.5).round(0)
+        raw['grid_lon'] = (raw['LONGITUDE'] / 1.5).round(0)
+        density  = raw.groupby(['grid_lat','grid_lon']).transform('count')['LATITUDE']
+        max_d    = max(float(density.max()), 1.0)
+        weights  = (density / max_d).clip(lower=0.15).values
+        pts_w    = [
+            [float(row['LATITUDE']), float(row['LONGITUDE']), float(w)]
+            for (_, row), w in zip(raw.iterrows(), weights)
+        ]
+        HeatMap(
+            pts_w, name='Argo Floats Heatmap',
+            min_opacity=0.2,
+            radius=20, blur=15,
+            gradient={0.0: 'blue', 0.35: 'cyan', 0.7: 'lime', 1.0: 'yellow'},
+        ).add_to(fg_argo)
+
+        for _, row in raw.iterrows():
+            folium.CircleMarker(
+                location=[row['LATITUDE'], row['LONGITUDE']],
+                radius=8, color='transparent', fill=True, fill_color='transparent',
+                tooltip=f"<div style='font-size:12px;font-family:sans-serif;'><b>Argo Float (Platform {row['PLATFORM_NUMBER']})</b><br>Type: Profiling Float<br>Data: Temperature, Salinity, Pressure</div>"
+            ).add_to(fg_argo)
+
+    trail_pts = argo_full[['LATITUDE','LONGITUDE']].dropna().values.tolist()
+    if trail_pts:
+        HeatMap(
+            trail_pts, name='Argo Trail Density',
+            min_opacity=0.4,
+            radius=12, blur=10,
+            gradient={0.4: '#003366', 0.7: '#0077cc', 1.0: '#00ccff'},
+        ).add_to(fg_argo)
+
+    top40 = (argo_full.groupby('PLATFORM_NUMBER')
+             .size().nlargest(40).index.tolist())
+    time_col = next((c for c in ['JULD','DATE','TIME','date','time','timestamp','TIMESTAMP']
+                     if c in argo_full.columns), None)
+    for pid in top40:
+        sub  = argo_full[argo_full['PLATFORM_NUMBER'] == pid]
+        if time_col:
+            sub = sub.sort_values(time_col)
+        traj = sub[['LATITUDE','LONGITUDE']].dropna().values.tolist()
+        if len(traj) < 2:
+            continue
+        folium.PolyLine(
+            traj, color='#4dd0e1', weight=1.2, opacity=0.55,
+            tooltip=f'Platform {pid}',
+        ).add_to(fg_argo)
+        folium.CircleMarker(
+            location=traj[-1], radius=4,
+            color='#ffffff', fill=True, fill_color='#29b6f6',
+            fill_opacity=0.95, weight=1,
+            tooltip=f'<b>Platform {pid}</b> – last fix',
+        ).add_to(fg_argo)
+
+    fg_argo.add_to(m)
+
+    # ── 2. SIMCOSTA ───────────────────────────────────────────────────────────
+    sim_pts = sim_df[['LATITUDE','LONGITUDE']].dropna().values.tolist()
+    if sim_pts:
+        HeatMap(
+            sim_pts, name='SIMCosta Coverage Heatmap',
+            min_opacity=0.5,
+            radius=18, blur=14,
+            gradient={0.4: '#1b5e20', 0.7: '#43a047', 1.0: '#b9f6ca'},
+        ).add_to(fg_sim)
+
+    for _, row in sim_df.iterrows():
+        tooltip_html = (
+            "<div style='font-family:sans-serif;font-size:13px;line-height:1.6;"
+            "background:#0d1f0d;color:#c8e6c9;"
+            "padding:8px 11px;border-radius:6px;"
+            "border:1px solid #2e7d32;min-width:210px;'>"
+            f"<b style='color:#69f0ae;font-size:14px'>{row['Name']}</b><br>"
+            "SIMCosta Monitoring Station<br>"
+            "<span style='display:inline-block;margin-top:5px;"
+            "background:#4a2c00;color:#ffcc80;"
+            "font-size:11px;font-weight:600;"
+            "padding:2px 8px;border-radius:4px;"
+            "border:1px solid #ff8f00;'>"
+            "⚠ On ODIS — data not up to date"
+            "</span><br>"
+            f"<span style='color:#607d8b;font-size:11px'>"
+            f"{row['LATITUDE']:.4f}, {row['LONGITUDE']:.4f}</span>"
+            "</div>"
+        )
+        folium.Marker(
+            location=[row['LATITUDE'], row['LONGITUDE']],
+            icon=folium.DivIcon(
+                html=(
+                    f'<div style="width:32px;height:44px;'
+                    f'filter:drop-shadow(0 2px 6px rgba(0,0,0,.8))">'
+                    f'{BUOY_SVG}</div>'
+                ),
+                icon_size=(32, 44),
+                icon_anchor=(16, 44),
+            ),
+            tooltip=folium.Tooltip(tooltip_html, sticky=False),
+        ).add_to(fg_sim)
+
+    fg_sim.add_to(m)
+
+    # ── 3. ANP OFFSHORE ───────────────────────────────────────────────────────
+    anp_pts = anp_df[['LATITUDE','LONGITUDE', 'Name']].dropna(subset=['LATITUDE','LONGITUDE']).copy()
+    pts_list = anp_pts[['LATITUDE','LONGITUDE']].values.tolist()
+    if pts_list:
+        HeatMap(
+            pts_list, name='ANP Offshore Heatmap',
+            min_opacity=0.5,
+            radius=16, blur=12,
+            gradient={0.4: 'orange', 0.7: '#ff4500', 1.0: 'red'},
+        ).add_to(fg_anp)
+
+        for _, row in anp_pts.iterrows():
+            plat_name = row['Name']
+            folium.CircleMarker(
+                location=[row['LATITUDE'], row['LONGITUDE']],
+                radius=10, color='transparent', fill=True, fill_color='transparent',
+                tooltip=f"<div style='font-size:12px;font-family:sans-serif;'><b>{plat_name}</b><br>Type: ANP Offshore Platform<br>Data: MetOcean & Meteorological</div>"
+            ).add_to(fg_anp)
+
+    fg_anp.add_to(m)
+
+    # ── 4. PROJETO AZUL ───────────────────────────────────────────────────────
+    if not azul_df.empty:
+        cloud = []
+        for idx, row in azul_df.iterrows():
+            rad_km = row.get('radius_km', 60)
+            desc_br = row.get('description', 'MetOcean Data')
+
+            folium.Circle(
+                location=[row['LATITUDE'], row['LONGITUDE']],
+                radius=rad_km * 1000, color='transparent', fill=True, fill_color='transparent',
+                tooltip=f"<div style='font-size:12px;font-family:sans-serif;'><b>Projeto Azul Area</b><br>Type: Glider / Modeling<br>Data: T, S, DO, Chl-a (Biogeochemical)</div>"
+            ).add_to(fg_azul)
+
+            cloud.extend(make_azul_cloud(
+                row['LATITUDE'], row['LONGITUDE'],
+                radius_km=rad_km, seed=int(idx),
+            ))
+
+        if cloud:
+            HeatMap(
+                cloud, name='Projeto Azul Heatmap',
+                min_opacity=0.55,
+                radius=16, blur=12,
+                gradient={0.4: '#4a2000', 0.7: '#cc6600', 1.0: '#ffcc00'},
+            ).add_to(fg_azul)
+
+        fg_azul.add_to(m)
+
+    # ── Layer control agrupado na esquerda ────────────────────────────────────
+    GroupedLayerControl(
+        groups={
+            'ODIS Data': [fg_argo],
+            'ODIS Data - Needs Attention': [fg_sim],
+            'Dark Data': [fg_anp, fg_azul]
+        },
+        exclusive_groups=False,
+        collapsed=True,
+        position='topleft'
+    ).add_to(m)
+
+
+    legend_html = '''
+    <div style="position:fixed;bottom:30px;left:16px;
+        background:rgba(8,15,40,0.92);border:1px solid rgba(255,255,255,0.13);
+        border-radius:10px;padding:14px 16px;z-index:9999;min-width:195px;
+        font-family:sans-serif;color:#dce3f0;box-shadow:0 4px 20px rgba(0,0,0,.6);">
+        <div style="font-size:10px;font-weight:700;letter-spacing:1px;
+                    color:#90b8d4;margin-bottom:7px;text-transform:uppercase;">
+            Heatmap Intensity
+        </div>
+        <div style="height:11px;border-radius:3px;overflow:hidden;margin-bottom:3px;
+                    background:linear-gradient(to right,blue,cyan,yellow);">
+        </div>
+        <div style="display:flex;justify-content:space-between;
+                    font-size:9px;color:#7a90a4;margin-bottom:11px;">
+            <span>Low</span><span>Medium</span><span>High</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+            <div style="font-size:9px;font-weight:700;color:#556680;
+                text-transform:uppercase;letter-spacing:.8px;
+                border-bottom:1px solid rgba(255,255,255,.07);padding-bottom:3px;">
+                Layers
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                <div style="width:30px;height:5px;border-radius:2px;flex-shrink:0;
+                    background:linear-gradient(to right,blue,cyan,yellow);"></div>
+                Argo Floats
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                <div style="width:30px;height:5px;border-radius:2px;flex-shrink:0;
+                    background:linear-gradient(to right,#003366,#0077cc,#00ccff);"></div>
+                Argo Trails
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                <div style="width:30px;height:5px;border-radius:2px;flex-shrink:0;
+                    background:linear-gradient(to right,#1b5e20,#43a047,#b9f6ca);"></div>
+                SIMCosta
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                <div style="width:30px;height:5px;border-radius:2px;flex-shrink:0;
+                    background:linear-gradient(to right,orange,#ff4500,red);"></div>
+                ANP Offshore
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                <div style="width:30px;height:5px;border-radius:2px;flex-shrink:0;
+                    background:linear-gradient(to right,#4a2000,#cc6600,#ffcc00);"></div>
+                Projeto Azul
+            </div>
+        </div>
+    </div>'''
+    m.get_root().html.add_child(folium.Element(legend_html))
+    return m
+
+# ─── RENDER ───────────────────────────────────────────────────────────────────
+
+m = build_map()
+
+st_folium(m, use_container_width=True, height=1200, returned_objects=[])
